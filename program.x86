@@ -1,0 +1,15 @@
+include 'stage1st.x86'
+
+; Pad the remaining bytes with NOP opcode
+times 510-($-$$) db 0x90
+
+; Magic bytes to make this binary bootable
+db 0x55, 0xaa
+
+include 'stage2nd.x86'
+
+; Generate floppy image if true, otherwise generate binary file
+if FLOPPY eq 1
+    ; Pad the remaining bytes of floppy image with NOP opcode
+    times 1474560-512-($-$$) db 0x90
+end if

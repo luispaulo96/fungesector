@@ -1,0 +1,127 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Code section - Second stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+include 'sectorlib/helpers.x86'
+
+use16
+
+org 0x0100
+
+stage_2nd:
+
+setup_2nd:
+    push cs
+    pop ds
+
+    call clear_display_page
+
+draw_borders:
+    xor dx, dx
+    push dx
+    push 0x0000
+    call set_cursor_position
+
+.draw_up_left:
+    push box_up_left
+    call write_char_advance
+
+    mov cx, 0x004e
+
+.draw_up_horizontal:
+    push box_horizontal
+    call write_char_advance
+
+    loop .draw_up_horizontal
+
+.draw_up_right:
+    push box_up_right
+    call write_char_advance
+
+    mov cx, 0x0017
+
+.draw_vertical:
+    push cx
+
+    push box_vertical
+    call write_char_advance
+
+    push 0x0000
+    call read_cursor_position
+
+    mov al, 0x004f
+    push ax
+    push 0x0000
+    call set_cursor_position
+
+    push box_vertical
+    call write_char_advance
+
+    pop cx
+    loop .draw_vertical
+
+.draw_down_left:
+    push box_down_left
+    call write_char_advance
+
+    mov cx, 0x004e
+
+.draw_down_horizontal:
+    push box_horizontal
+    call write_char_advance
+
+    loop .draw_down_horizontal
+
+.draw_down_right:
+    push box_down_right
+    push 0x0000
+
+    call write_char_stay
+
+show_messages:
+    call disable_cursor
+
+    push 0x0a22
+    push 0x0000
+    call set_cursor_position
+
+    push hello_sector
+    call write_string
+
+    push 0x0c1c
+    push 0x0000
+    call set_cursor_position
+
+    push reboot_key
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+exit_loop:
+    jmp 0x0000:reboot
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Custom functions - Second stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+include 'sectorlib/bios_keyboard.x86'
+include 'sectorlib/bios_video.x86'
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Data section - Second stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+box_up_left:    db 0xc9     ; ╔
+box_up_right:   db 0xbb     ; ╗
+
+box_down_left:  db 0xc8     ; ╚
+box_down_right: db 0xbc     ; ╝
+
+box_horizontal: db 0xcd     ; ═
+box_vertical:   db 0xba     ; ║
+
+hello_sector:   db 'Hello sector', NUL
+reboot_key:     db 'Press any key to reboot', NUL

@@ -1,0 +1,48 @@
+proc clear_keyboard_buffer
+.more_keys:
+    ; Get Keyboard Status
+    mov ax, 0x0100
+    int 0x16        ; Keyboard BIOS Services
+
+    jz .finish
+
+    ; Wait for Keypress and Read Character
+    xor ax, ax
+    int 0x16        ; Keyboard BIOS Services
+
+    jmp .more_keys
+
+.finish:
+    ret
+endp
+
+proc wait_for_keypress
+    ; Wait for Keypress and Read Character
+    xor ax, ax
+    int 0x16        ; Keyboard BIOS Services
+
+.finish:
+    ret
+endp
+
+proc is_key_equal
+    push bp
+    mov bp, sp
+
+    mov dx, [bp + 6]    ; Last key pressed (first parameter)
+    mov ax, [bp + 4]    ; Key to compare (second parameter)
+
+    cmp al, dl
+    jz .key_equal
+
+.key_not_equal:
+    xor ax, ax
+    jmp .finish
+
+.key_equal:
+    mov ax, 0x0001
+
+.finish:
+    pop bp
+    ret 0x04
+endp

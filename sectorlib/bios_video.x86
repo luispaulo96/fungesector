@@ -1,0 +1,155 @@
+proc disable_cursor
+.start:
+    mov cx, 0x2000      ; Disable cursor
+
+    mov ax, 0x0100      ; Set Cursor Type
+    int 0x10
+
+.finish:
+    ret
+endp
+
+proc enable_cursor
+.start:
+    push bp
+    mov bp, sp
+
+    mov cx, [bp + 4]    ; Cursor scanline (only parameter)
+
+    mov ax, 0x0100      ; Set Cursor Type
+    int 0x10
+
+.finish:
+    pop bp
+    ret 0x02
+endp
+
+proc set_cursor_position
+.start:
+    push bp
+    mov bp, sp
+
+    mov dx, [bp + 4]    ; Row and column (only parameter)
+
+    push es
+    mov ax, 0x0040
+    mov es, ax
+    mov bh, [es:0x62]   ; Current display page
+    pop es
+
+    mov ax, 0x0200      ; Set Cursor Position
+    int 0x10
+
+.finish:
+    pop bp
+    ret 0x02
+endp
+
+proc read_cursor_position
+.start:
+    push es
+    mov ax, 0x0040
+    mov es, ax
+    mov bh, [es:0x62]   ; Current display page
+    pop es
+
+    mov ax, 0x0300      ; Read Cursor Position and Size
+    int 0x10
+
+.finish:
+    ; Return a 32-bit value (DX:AX)
+    mov ax, dx          ; Cursor row and column
+    mov dx, cx          ; Cursor scan line
+
+    ret
+endp
+
+proc select_display_page
+.start:
+    push bp
+    mov bp, sp
+
+    mov ax, [bp + 4]    ; New display page (only parameter)
+
+    mov ah, 0x05        ; Select Active Display Page
+    int 0x10
+
+.finish:
+    pop bp
+    ret 0x02
+endp
+
+proc clear_display_page
+.start:
+    mov bx, 0x0700      ; Attribute to be used on blank line
+    xor cx, cx
+    mov dx, 0x184f
+
+    mov ax, 0x0600      ; Scroll Window Up
+    int 0x10
+
+.finish:
+    ret
+endp
+
+proc write_char_stay
+.start:
+    push bp
+    mov bp, sp
+
+    mov si, [bp + 8]    ; Character location (first parameter)
+    mov bx, [bp + 6]    ; Character attribute (second parameter)
+    mov cx, [bp + 4]    ; Number of times to write (third parameter)
+
+    push es
+    mov ax, 0x0040
+    mov es, ax
+    mov bh, [es:0x62]   ; Current display page
+    pop es
+
+    lodsb
+
+    mov ah, 0x09        ; Write Character and Attribute at Cursor Position
+    int 0x10
+
+.finish:
+    pop bp
+    ret 0x04
+endp
+
+proc write_char_advance
+    push bp
+    mov bp, sp
+
+    mov si, [bp + 4]
+
+    lodsb
+
+    mov ah, 0x0e
+    int 0x10
+
+.finish:
+    pop bp
+    ret 0x02
+endp
+
+proc write_string
+    push bp
+    mov bp, sp
+
+    mov si, [bp + 4]
+
+.next_char:
+    lodsb
+    cmp al, NUL
+    je .finish
+
+    mov ah, 0x0e
+    int 0x10
+
+    jmp .next_char
+
+.finish:
+    pop bp
+    ret 0x02
+endp

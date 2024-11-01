@@ -1,0 +1,1326 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Code section - Second stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+include 'sectorlib/helpers.x86'
+
+use16
+
+org 0x0100
+
+stage_2nd:
+    push cs
+    pop ds
+
+    ; Setup int 0x1b - BIOS Ctrl-Break Handler Address
+    push es
+
+    xor bx, bx
+    mov es, bx
+
+    cli
+    mov word [es:0x6c], ctrl_break
+    mov [es:0x6e], cs
+    sti
+
+    pop es
+    ; End setup
+
+    call clear_display_page
+
+proc state_splash_screen
+    push 0x0000
+    call set_cursor_position
+
+    ; Save the original cursor scanline to restore it later
+    call read_cursor_position
+    mov word [cursor_scanline], dx
+
+    call disable_cursor
+
+.draw_up_left:
+    push .box_up_left
+    call write_char_advance
+
+    mov cx, 0x004e
+.draw_up_horizontal:
+    push .box_hori
+    call write_char_advance
+
+    loop .draw_up_horizontal
+
+.draw_up_right:
+    push .box_up_right
+    call write_char_advance
+
+    mov cx, 0x0017
+.draw_vertical:
+    push cx
+
+    push .box_vert
+    call write_char_advance
+
+    call read_cursor_position
+
+    mov al, 0x4f
+    push ax
+    call set_cursor_position
+
+    push .box_vert
+    call write_char_advance
+
+    pop cx
+    loop .draw_vertical
+
+.draw_down_left:
+    push .box_down_left
+    call write_char_advance
+
+    mov cx, 0x004e
+.draw_down_horizontal:
+    push .box_hori
+    call write_char_advance
+
+    loop .draw_down_horizontal
+
+.draw_down_right:
+    push .box_down_right
+    push 0x0007
+    push 0x0001
+    call write_char_stay
+
+    mov cx, 0x0006
+
+.draw_logo:
+    push word [.logo_position]
+    call set_cursor_position
+
+    push word [.logo_pointer]
+    call write_string
+
+    add word [.logo_position], 0x0100
+    add word [.logo_pointer], 0x003f
+
+    loop .draw_logo
+
+.draw_start:
+    push 0x0e20
+    call set_cursor_position
+
+    push .version_out
+    call write_string
+
+    push 0x101d
+    call set_cursor_position
+
+    push .any_key_start
+    call write_string
+
+.wait_key:
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    push word [cursor_scanline]
+    call enable_cursor
+
+    jmp state_interpreter
+
+    nop
+
+var .box_up_left    db 0xc9 ; ╔
+var .box_up_right   db 0xbb ; ╗
+
+var .box_down_left  db 0xc8 ; ╚
+var .box_down_right db 0xbc ; ╝
+
+var .box_hori       db 0xcd ; ═
+var .box_vert       db 0xba ; ║
+
+var .logo_pointer   dw .logo_line1
+var .logo_position  dw 0x0709
+
+var .logo_line1     db '    ______                                      __            ', NUL
+var .logo_line2     db '   / ____/_  ______  ____ ____  ________  _____/ /_____  _____', NUL
+var .logo_line3     db '  / /_  / / / / __ \/ __ `/ _ \/ ___/ _ \/ ___/ __/ __ \/ ___/', NUL
+var .logo_line4     db ' / __/ / /_/ / / / / /_/ /  __(__  )  __/ /__/ /_/ /_/ / /    ', NUL
+var .logo_line5     db '/_/    \__,_/_/ /_/\__, /\___/____/\___/\___/\__/\____/_/     ', NUL
+var .logo_line6     db '                  /____/                                      ', NUL
+
+var .version_out    db 'Premiere Edition', NUL
+var .any_key_start  db 'Press any key to start', NUL
+endp
+
+proc state_interpreter
+.interpreter_init:
+    push interpreter_log
+    call logger_string
+
+    call clear_display_page
+
+    push 0x0000
+    call set_cursor_position
+
+    push code_memory
+    call write_string
+
+    push 0x1800
+    call set_cursor_position
+
+    push read_key_loop.bottom_bar
+    call write_string
+
+    push 0x0000
+    call set_cursor_position
+
+read_key_loop:
+    push 0x0000
+    call select_display_page
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+.action_f1_key:
+    cmp ah, F1_KEY
+    jne .action_f2_key
+    mov byte [current_page], 1
+    jmp state_help
+
+.action_f2_key:
+    cmp ah, F2_KEY
+    jne .action_f4_key
+    mov byte [current_page], 2
+    jmp state_about
+
+.action_f4_key:
+    cmp ah, F4_KEY
+    jne .action_f5_key
+    mov byte [current_page], 3
+    jmp state_load
+
+.action_f5_key:
+    cmp ah, F5_KEY
+    jne .action_f8_key
+    mov byte [current_page], 7
+    jmp state_run
+
+.action_f8_key:
+    cmp ah, F8_KEY
+    jne .action_f9_key
+    mov byte [current_page], 4
+    jmp state_save
+
+.action_f9_key:
+    cmp ah, F9_KEY
+    jne .action_f10_key
+    mov byte [current_page], 5
+    jmp state_options
+
+.action_f10_key:
+    cmp ah, F10_KEY
+    jne .action_del_key
+    jmp .toggle_bar
+
+.action_del_key:
+    cmp ah, DEL_KEY
+    jne .action_bs_key
+
+    push .space_bar
+    push 0x0007
+    push 0x0001
+    call write_char_stay
+
+    jmp read_key_loop
+
+.action_bs_key:
+    cmp al, BS_KEY
+    jne .action_up_key
+
+    call read_cursor_position
+
+    ; Screen boundary check
+    test al, al
+    jnz .decrement_bs
+
+.wrap_bs:
+    mov al, 0x4f
+    jmp .set_position_bs
+
+.decrement_bs:
+    dec al
+    jmp .set_position_bs
+
+.set_position_bs:
+    push ax
+    call set_cursor_position
+
+    push .space_bar
+    push 0x0007
+    push 0x0001
+    call write_char_stay
+
+    jmp read_key_loop
+
+.action_up_key:
+    cmp ah, UP_KEY
+    jne .action_right_key
+
+    call read_cursor_position
+
+    ; Screen boundary check
+    test ah, ah
+    jnz .decrement_up
+
+.wrap_up:
+    mov ah, 0x17
+    jmp .set_position
+
+.decrement_up:
+    dec ah
+    jmp .set_position
+
+    jmp read_key_loop
+
+.action_right_key:
+    cmp ah, RIGHT_KEY
+    jne .action_down_key
+
+.advance_right:
+    call read_cursor_position
+
+    ; Screen boundary check
+    cmp al, 0x4f
+    jnz .increment_right
+
+.wrap_right:
+    xor al, al
+    jmp .set_position
+
+.increment_right:
+    inc al
+    jmp .set_position
+
+.action_down_key:
+    cmp ah, DOWN_KEY
+    jne .action_left_key
+
+    call read_cursor_position
+
+    ; Screen boundary check
+    cmp ah, 0x17
+    jnz .increment_down
+
+.wrap_down:
+    xor ah, ah
+    jmp .set_position
+
+.increment_down:
+    inc ah
+    jmp .set_position
+
+    jmp read_key_loop
+
+.action_left_key:
+    cmp ah, LEFT_KEY
+    jne .action_ascii_key
+
+    call read_cursor_position
+
+    ; Screen boundary check
+    test al, al
+    jnz .decrement_left
+
+.wrap_left:
+    mov al, 0x4f
+    jmp .set_position
+
+.decrement_left:
+    dec al
+    jmp .set_position
+
+.action_ascii_key:
+    cmp al, SPACE_KEY
+    jl .action_esc_key
+
+    cmp al, TILDE_KEY
+    jg .action_esc_key
+
+    mov [.last_ascii], al
+
+    push .last_ascii
+    push 0x0007
+    push 0x0001
+    call write_char_stay
+
+    jmp .advance_right
+
+.action_esc_key:
+    cmp al, ESC_KEY
+    jne read_key_loop
+
+    mov byte [current_page], 6
+    jmp state_confirm_exit
+
+.set_position:
+    push ax
+    call set_cursor_position
+
+    jmp read_key_loop
+
+.toggle_bar:
+    call read_cursor_position
+    mov word [.cursor_pos], ax
+
+    push 0x1800
+    call set_cursor_position
+
+    cmp [.is_bar_enabled], 0
+    jz .write_bottom_bar
+
+.write_space_bar:
+    push .space_bar
+    push 0x0007
+    push 0x004f
+    call write_char_stay
+
+    jmp .set_cursor_pos_back
+
+.write_bottom_bar:
+    push read_key_loop.bottom_bar
+    call write_string
+
+    jmp .set_cursor_pos_back
+
+.set_cursor_pos_back:
+    xor [.is_bar_enabled], 1
+
+    push word [.cursor_pos]
+    call set_cursor_position
+
+    jmp read_key_loop
+
+var .bottom_bar     db 'F1=Help  F2=About  F4=Load  F5=Run  F8=Save  F9=Options  F10=Hide Bar  ESC=Quit', NUL
+var .space_bar      db SPACE_KEY
+
+var .last_ascii     db 0
+var .is_bar_enabled db 1
+var .cursor_pos     dw 0x0000
+endp
+
+proc state_help
+    push word [current_page]
+    call select_display_page
+
+    push 0x0000
+    call set_cursor_position
+
+    push .instructions
+    call write_string
+
+    push 0x181c
+    call set_cursor_position
+
+    push .press_go_back
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    jmp read_key_loop
+
+    nop
+
+var .press_go_back  db 'Press any key to go back', NUL
+var .instructions   db \
+'Welcome to the Fungesector help.                                                ', \
+'                                                                                ', \
+'In the interpreter page you can type individual Befunge-93 commands. When the   ', \
+'command, letter or number is typed, it appears on the editor and the cursor     ', \
+'advances to the right. To erase a command you can press space, backspace or     ', \
+'delete key. To run the code you can press the F5 key.                           ', \
+'                                                                                ', \
+'The available commands of Befunge-93 are:                                       ', \
+'+   -   *   /   %   !   `   >   <   ^   v   ?   _   |   "   :   \   $           ', \
+'.   ,   #   g   p   &   ~   @   0   1   2   3   4   5   6   7   8   9           ', \
+'                                                                                ', \
+'When the code is running the output is displayed like a teletype, and you can   ', \
+'type numbers or letters when prompted for a input. When the program is finished ', \
+'you can press a key to go back to interpreter page.                             ', \
+'                                                                                ', \
+'Important: to stop a unresponsive code or a infinite loop in the running page   ', \
+'you can press the Ctrl-Break and it will halt the program.                      ', \
+'                                                                                ', \
+'To exit the interpreter and reboot the machine you can press the ESC key and    ', \
+'confirm the choice with the Y key. To cancel this choice you can press either   ', \
+'the N key or the ESC key.                                                       ', \
+'                                                                                ', \
+'Have fun using Fungesector!                                                     ', NUL
+endp
+
+proc state_about
+    push word [current_page]
+    call select_display_page
+
+    push 0x0822
+    call set_cursor_position
+
+    push .program_out
+    call write_string
+
+    push 0x0a20
+    call set_cursor_position
+
+    push .version_out
+    call write_string
+
+    push 0x0c19
+    call set_cursor_position
+
+    push .author_out
+    call write_string
+
+    push 0x0e1d
+    call set_cursor_position
+
+    push .made_out
+    call write_string
+
+    push 0x181c
+    call set_cursor_position
+
+    push .press_go_back
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    jmp read_key_loop
+
+    nop
+
+var .program_out    db 'Fungesector', NUL
+var .version_out    db 'Premiere Edition', NUL
+var .author_out     db 'Copyright (c) 2024 Louis Paul', NUL
+var .made_out       db 'Made for the RC2024/10', NUL
+var .press_go_back  db 'Press any key to go back', NUL
+endp
+
+proc state_load
+    push word [current_page]
+    call select_display_page
+
+    push 0x0921
+    call set_cursor_position
+
+    push .load_out
+    call write_string
+
+    push 0x0b1e
+    call set_cursor_position
+
+    push .not_yet
+    call write_string
+
+    push 0x181c
+    call set_cursor_position
+
+    push .press_go_back
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    jmp read_key_loop
+
+    nop
+
+var .load_out       db 'Load code page', NUL
+var .not_yet        db 'Not implemented yet', NUL
+var .press_go_back  db 'Press any key to go back', NUL
+endp
+
+proc state_save
+    push word [current_page]
+    call select_display_page
+
+    push 0x0921
+    call set_cursor_position
+
+    push .save_out
+    call write_string
+
+    push 0x0b1e
+    call set_cursor_position
+
+    push .not_yet
+    call write_string
+
+    push 0x181c
+    call set_cursor_position
+
+    push .press_go_back
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    jmp read_key_loop
+
+    nop
+
+var .save_out       db 'Save code page', NUL
+var .not_yet        db 'Not implemented yet', NUL
+var .press_go_back  db 'Press any key to go back', NUL
+endp
+
+proc state_options
+    push word [current_page]
+    call select_display_page
+
+    push 0x0922
+    call set_cursor_position
+
+    push .options_out
+    call write_string
+
+    push 0x0b1e
+    call set_cursor_position
+
+    push .not_yet
+    call write_string
+
+    push 0x181c
+    call set_cursor_position
+
+    push .press_go_back
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    jmp read_key_loop
+
+    nop
+
+var .options_out    db 'Options page', NUL
+var .not_yet        db 'Not implemented yet', NUL
+var .press_go_back  db 'Press any key to go back', NUL
+endp
+
+proc state_confirm_exit
+    push word [current_page]
+    call select_display_page
+
+    push 0x0b15
+    call set_cursor_position
+
+    push .confirm_out
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    cmp al, ESC_KEY
+    je read_key_loop
+
+    cmp al, 'n'
+    je read_key_loop
+
+    cmp al, 'y'
+    je exit_reboot
+
+    jmp state_confirm_exit
+
+    nop
+
+var .confirm_out    db 'Exit confirmation, are you sure? (y/n)', NUL
+endp
+
+; Fetch, decode and execute
+proc state_run
+.copy_code_to_memory:
+    push ds
+    push es
+
+    xor si, si
+    mov di, code_memory
+
+    mov bx, ds
+    mov es, bx
+
+    mov bx, 0xb800
+    mov ds, bx
+
+    mov cx, 0x0fa0
+    rep movsb
+
+    pop es
+    pop ds
+
+.run_code_from_memory:
+    push word [current_page]
+    call select_display_page
+
+    push 0x0000
+    call set_cursor_position
+
+    call clear_display_page
+
+    mov byte [.is_running], 1
+    mov byte [.is_string_mode], 0
+    mov byte [.current_char], 0
+    mov byte [.advance_pc], 0
+    mov word [.pc_direction], 0x0002
+    mov byte [.hor_boundary], 1
+
+    xor bx, bx
+
+.fetch_loop:
+    test byte [.advance_pc], 1
+    jz .skip_increment
+
+.do_increment:
+    add bx, [.pc_direction]
+
+    ;cmp word [.pc_direction], 0x0002
+    ;je .check_wrap_right
+
+    ;cmp word [.pc_direction], -0x0002
+    ;je .check_wrap_left
+
+    cmp word [.pc_direction], 0x00a0
+    je .check_warp_down
+
+    cmp word [.pc_direction], -0x00a0
+    je .check_warp_up
+
+    jmp .skip_increment
+
+.check_wrap_right:
+    mov ax, bx
+    and ax, 0x0fff
+
+    mov cl, 0xa0
+    div cl
+
+    inc al
+
+    cmp al, [.hor_boundary]
+    jne .correct_warp_right
+
+    jmp .skip_increment
+
+.correct_warp_right:
+    ; abs(0xa0 - (0xa0 * boundary))
+    mov dx, 0xa0
+    mov ax, 0xa0
+
+    mul byte [.hor_boundary]
+
+    sub dx, ax
+    neg dx
+
+    mov bx, dx
+
+    jmp .skip_increment
+
+.check_wrap_left:
+    mov ax, bx
+    and ax, 0x0fff
+
+    mov cl, 0xa0
+    div cl
+
+    inc al
+
+    cmp al, [.hor_boundary]
+    jne .correct_warp_left
+
+    jmp .skip_increment
+
+.correct_warp_left:
+    ; 0x9e + abs(0xa0 - (0xa0 * boundary))
+    mov dx, 0xa0
+    mov ax, 0xa0
+
+    mul byte [.hor_boundary]
+
+    sub dx, ax
+    neg dx
+
+    add dx, 0x9e
+
+    mov bx, dx
+
+    jmp .skip_increment
+
+.check_warp_down:
+    inc byte [.hor_boundary]
+
+    cmp [.hor_boundary], 0x18
+    jle .down_hor_boundary_corrected
+
+    mov byte [.hor_boundary], 1
+
+.down_hor_boundary_corrected:
+    cmp bx, 0x0f00
+    jae .correct_warp_down
+
+    jmp .skip_increment
+
+.correct_warp_down:
+    sub bx, 0x0f00
+    jmp .skip_increment
+
+.check_warp_up:
+    dec byte [.hor_boundary]
+
+    cmp [.hor_boundary], 0
+    jge .up_hor_boundary_corrected
+
+    mov byte [.hor_boundary], 0x18
+
+.up_hor_boundary_corrected:
+    cmp bx, 0xff60
+    jae .correct_warp_up
+
+    jmp .skip_increment
+
+.correct_warp_up:
+    sub bx, 0xf100
+    jmp .skip_increment
+
+.skip_increment:
+    mov al, [code_memory+bx]
+
+    mov [.current_char], al
+
+    push ax
+    call logger_char
+
+    ;mc_delay 0x0007, 0xa120
+
+    or byte [.advance_pc], 1
+
+    cmp byte [.is_running], 0
+    je .finish_command
+
+    cmp al, '"'
+    je .toggle_string_mode
+
+    mov ah, [.is_string_mode]
+    test ah, ah
+    jnz .push_char
+
+    ; Push number commands
+    cmp al, '0'
+    je .push_digit
+
+    cmp al, '1'
+    je .push_digit
+
+    cmp al, '2'
+    je .push_digit
+
+    cmp al, '3'
+    je .push_digit
+
+    cmp al, '4'
+    je .push_digit
+
+    cmp al, '5'
+    je .push_digit
+
+    cmp al, '6'
+    je .push_digit
+
+    cmp al, '7'
+    je .push_digit
+
+    cmp al, '8'
+    je .push_digit
+
+    cmp al, '9'
+    je .push_digit
+    ; End
+
+    ; Arithmetic commands
+    cmp al, '+'
+    je .add_operation
+
+    cmp al, '-'
+    je .sub_operation
+
+    cmp al, '*'
+    je .mul_operation
+
+    cmp al, '/'
+    je .div_operation
+
+    cmp al, '%'
+    je .mod_operation
+
+    cmp al, '!'
+    je .not_operation
+
+    cmp al, '`'
+    je .gt_operation
+    ; End
+
+    ; Direction commands
+    cmp al, '?'
+    je .force_random
+
+    cmp al, '<'
+    je .force_left
+
+    cmp al, '>'
+    je .force_right
+
+    cmp al, '^'
+    je .force_up
+
+    cmp al, 'v'
+    je .force_down
+
+    cmp al, '_'
+    je .horizontal_if
+
+    cmp al, '|'
+    je .vertical_if
+    ; End
+
+    ; Stack commands
+    cmp al, ':'
+    je .duplicate_top_stack
+
+    cmp al, '\'
+    je .swap_top_two_values
+
+    cmp al, '$'
+    je .pop_stack_discard
+
+    cmp al, '.'
+    je .pop_stack_number
+
+    cmp al, ','
+    je .pop_stack_ascii
+    ; End
+
+    ; Trampoline command
+    cmp al, '#'
+    je .skip_one_command
+    ; End
+
+    ; Get cell and put cell commands
+    cmp al, 'g'
+    je .get_cell
+
+    cmp al, 'p'
+    je .put_cell
+    ; End
+
+    ; Input commands
+    cmp al, '&'
+    je .input_integer
+
+    cmp al, '~'
+    je .input_character
+
+    ; Finish program command
+    cmp al, '@'
+    je .finish_command
+    ; End
+
+    ; NOP commands
+    cmp al, ' '
+    je .fetch_loop
+
+    cmp al, NUL
+    je .fetch_loop
+    ; End
+
+    jmp .fetch_loop
+
+.toggle_string_mode:
+    xor byte [.is_string_mode], 1
+    jmp .fetch_loop
+
+.push_char:
+    push word [.current_char]
+    jmp .fetch_loop
+
+.push_digit:
+    sub al, '0'
+    push ax
+    jmp .fetch_loop
+
+.add_operation:
+    pop word [.parameter_2]
+
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    add ax, word [.parameter_2]
+
+    push ax
+
+    jmp .fetch_loop
+
+.sub_operation:
+    pop word [.parameter_2]
+
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    sub ax, word [.parameter_2]
+
+    push ax
+
+    jmp .fetch_loop
+
+.mul_operation:
+    pop word [.parameter_2]
+
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    mul word [.parameter_2]
+
+    push ax
+
+    jmp .fetch_loop
+
+.div_operation:
+    pop word [.parameter_2]
+
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    div word [.parameter_2]
+
+    push ax
+
+    jmp .fetch_loop
+
+.mod_operation:
+    pop word [.parameter_2]
+
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    div word [.parameter_2]
+
+    push dx
+
+    jmp .fetch_loop
+
+.not_operation:
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    test ax, ax
+
+    ; Isolate the zero flag
+    lahf
+    xor al, al
+    and ah, 0x40
+    xchg ah, al
+    shr al, 6
+
+    push ax
+
+    jmp .fetch_loop
+
+.gt_operation:
+    pop word [.parameter_2]
+
+    pop word [.parameter_1]
+
+    mov ax, word [.parameter_1]
+    cmp ax, word [.parameter_2]
+
+    jz .push_zero
+
+    ; Isolate the sign flag
+    lahf
+    xor al, al
+    and ah, 0x80
+    xchg ah, al
+    shr al, 7
+    xor al, 1
+
+    push ax
+
+    jmp .fetch_loop
+
+.push_zero:
+    push 0x0000
+
+    jmp .fetch_loop
+
+.force_random:
+    call random_direction
+
+    cmp ax, 0
+    je .force_up
+
+    cmp ax, 1
+    je .force_right
+
+    cmp ax, 2
+    je .force_down
+
+    cmp ax, 3
+    je .force_left
+
+    ; TODO: handle error when value outside 0-3
+    jmp .fetch_loop
+
+.force_right:
+    mov word [.pc_direction], 0x0002
+    jmp .fetch_loop
+
+.force_left:
+    mov word [.pc_direction], -0x0002
+    jmp .fetch_loop
+
+.force_down:
+    mov word [.pc_direction], 0x00a0
+    jmp .fetch_loop
+
+.force_up:
+    mov word [.pc_direction], -0x00a0
+    jmp .fetch_loop
+
+.pop_stack_discard:
+    pop word [.char_to_write]
+
+    jmp .fetch_loop
+
+.pop_stack_number:
+    pop word [.char_to_write]
+
+    push word [.char_to_write]
+    push .result_end
+    call int_to_ascii
+    mov word [.result_ptr], ax
+
+    push word [.result_ptr]
+    call write_string
+
+    push word ' '
+    call write_char_advance
+
+    jmp .fetch_loop
+
+.pop_stack_ascii:
+    pop word [.char_to_write]
+
+    push word .char_to_write
+    call write_char_advance
+
+    jmp .fetch_loop
+
+.duplicate_top_stack:
+    pop ax
+    push ax
+    push ax
+
+    jmp .fetch_loop
+
+.swap_top_two_values:
+    pop word [.parameter_2]
+    pop word [.parameter_1]
+
+    push [.parameter_2]
+    push [.parameter_1]
+
+    jmp .fetch_loop
+
+.skip_one_command:
+    add bx, [.pc_direction]
+
+    jmp .fetch_loop
+
+.get_cell:
+    pop word [.parameter_2]
+    pop word [.parameter_1]
+
+    cmp word [.parameter_1], 0x0050
+    jae .push_zero
+
+    cmp word [.parameter_2], 0x0019
+    jae .push_zero
+
+    xor si, si
+    add si, [.parameter_1]
+    shl si, 1
+
+    xor di, di
+    add di, [.parameter_2]
+    shl di, 1
+    imul di, 0x50
+
+    add di, si
+
+    push word [code_memory+di]
+
+    jmp .fetch_loop
+
+.put_cell:
+    pop word [.parameter_3]
+    pop word [.parameter_2]
+    pop word [.parameter_1]
+
+    cmp word [.parameter_2], 0x0050
+    jae .fetch_loop
+
+    cmp word [.parameter_3], 0x0019
+    jae .fetch_loop
+
+    xor si, si
+    add si, [.parameter_2]
+    shl si, 1
+
+    xor di, di
+    add di, [.parameter_3]
+    shl di, 1
+    imul di, 0x50
+
+    add di, si
+
+    mov dx, [.parameter_1]
+    xor dh, dh
+    mov word [code_memory+di], dx
+
+    jmp .fetch_loop
+
+.input_integer:
+    push .number_input
+    push .number_max
+    call get_string
+
+    push .newline
+    call write_string
+
+    push .number_input
+    call ascii_to_int
+    mov word [.number_bin], ax
+
+    push word [.number_bin]
+
+    jmp .fetch_loop
+
+.input_character:
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    xor ah, ah
+    push ax
+
+    jmp .fetch_loop
+
+.horizontal_if:
+    cmp sp, 0xfffe
+    jnz .pop_normal
+
+.pop_zero:
+    xor al, al
+    jmp .horizontal_condition
+
+.pop_normal:
+    pop ax
+
+.horizontal_condition:
+    test al, al
+    jz .force_right
+    jmp .force_left
+
+.vertical_if:
+    cmp sp, 0xfffe
+    jnz .pop_vertical_normal
+
+.pop_vertical_zero:
+    xor al, al
+    jmp .horizontal_condition
+
+.pop_vertical_normal:
+    pop ax
+
+.vertical_condition:
+    test al, al
+    jz .force_down
+    jmp .force_up
+
+.finish_command:
+    mov sp, 0xfffe
+    mov word [0xfffe], 0
+
+    push .halt_message
+    call write_string
+
+    call clear_keyboard_buffer
+    call wait_for_keypress
+
+    jmp read_key_loop
+
+    nop
+
+var .is_running     db 1
+var .is_string_mode db 0
+
+var .current_char   db 0
+var .advance_pc     db 0
+var .pc_direction   dw 0x0002
+var .char_to_write  dw 0x0000
+
+var .parameter_1    dw 0x0000
+var .parameter_2    dw 0x0000
+var .parameter_3    dw 0x0000
+
+var .number_max     dw 0x0006
+var .number_input   db 7 dup(0)
+var .number_bin     dw 0x0000
+
+var .result_ptr     dw 0x0000
+var .result_out     db 5 dup(0)
+var .result_end     db 0
+
+var .hor_boundary   db 1
+
+var .newline        db CRLF, NUL
+var .halt_message   db CRLF, 'Program halted, press any key to return', NUL
+endp
+
+ctrl_break:
+    ; These lines are necessary to ensure that CS and DS values are equal
+    push cs
+    pop ds
+
+    mov byte [state_run.is_running], 0
+    iret
+
+exit_reboot:
+    jmp 0x0000:reboot
+
+    nop
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Custom functions - Second stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+include 'sectorlib/bios_keyboard.x86'
+include 'sectorlib/bios_video.x86'
+include 'sectorlib/functions.x86'
+include 'sectorlib/logging.x86'
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Data section - Second stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+var current_page    db 0
+var cursor_scanline dw 0x0000
+
+var interpreter_log db 'Interpreter page', CRLF, NUL
+
+var code_memory     db 0

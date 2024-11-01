@@ -1,0 +1,116 @@
+proc get_string
+    push bp
+    mov bp, sp
+
+    mov di, [bp + 6]
+    mov si, [bp + 4]
+
+    mov cx, 0x00
+
+.next_char:
+    mov ah, 0x00
+    int 0x16
+
+    cmp al, BS_KEY
+    je .is_empty
+
+.continue:
+    mov ah, 0x0e
+    int 0x10
+
+    cmp al, BS_KEY
+    je .go_back
+
+    cmp al, CR_KEY
+    je .finish
+
+    stosb
+
+    inc cx
+    cmp cx, [si]
+    je .finish
+
+    jmp .next_char
+
+.is_empty:
+    cmp cx, 0x00
+    je .next_char
+    jmp .continue
+
+.go_back:
+    mov al, 0x20
+    mov ah, 0x0a
+    int 0x10
+    dec di
+    dec cx
+    jmp .next_char
+
+.finish:
+    mov byte [di], NUL
+
+    pop bp
+    ret 0x04
+endp
+
+proc ascii_to_int
+    push bp
+    mov bp, sp
+
+    mov si, [bp + 4]
+
+    xor dx, dx
+    xor ax, ax
+
+.next_char:
+    lodsb
+    cmp al, 0
+    je .finish
+    sub al, '0'
+    imul dx, 10
+    add dx, ax
+    jmp .next_char
+
+.finish:
+    xchg ax, dx
+    pop bp
+    ret 0x02
+endp
+
+proc int_to_ascii
+    push bp
+    mov bp, sp
+
+    mov ax, [bp + 6]
+    mov si, [bp + 4]
+
+    mov cx, 10
+
+.next_char:
+    xor dx, dx
+    div cx
+    add dl, '0'
+    dec si
+    mov [si], dl
+    test ax, ax
+    jnz .next_char
+
+.finish:
+    mov ax, si
+
+    pop bp
+    ret 0x04
+endp
+
+proc random_direction
+    xor ax, ax
+    int 0x1a
+
+    mov ax, dx
+    xor dx, dx
+    mov cx, 0x0004
+    div cx
+
+    mov ax, dx
+
+    ret
+endp

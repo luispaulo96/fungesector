@@ -1,0 +1,174 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Code section - First stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+include 'sectorlib/helpers.x86'
+
+use16
+
+org 0x7c00
+    jmp stage_1st
+
+    ; NOP opcode needed because the BPB has to start on location 0x03
+    nop
+
+    ; DOS 4.0 EBPB 1.44MB floppy
+    OEMname:           db 'mkfs.fat'  ; mkfs.fat is what OEMname mkdosfs uses
+    bytesPerSector:    dw 512
+    sectPerCluster:    db 1
+    reservedSectors:   dw 1
+    numFAT:            db 2
+    numRootDirEntries: dw 224
+    numSectors:        dw 2880
+    mediaType:         db 0xf0
+    numFATsectors:     dw 9
+    sectorsPerTrack:   dw 18
+    numHeads:          dw 2
+    numHiddenSectors:  dd 0
+    numSectorsHuge:    dd 0
+    driveNum:          db 0
+    reserved:          db 0
+    signature:         db 0x29
+    volumeID:          dd 0x2d7e5a1a
+    volumeLabel:       db 'NO NAME    '
+    fileSysType:       db 'FAT12   '
+
+stage_1st:
+    ; Some BIOSes jump to 0x07c0:0000, so force CS to 0x0000
+    jmp 0x0000:setup_1st
+
+setup_1st:
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+
+    cli             ; Disable interrupts to circumvent bug on early 8088 CPUs
+    mov bx, 0x1000
+    mov ss, bx
+    mov sp, 0xfffe  ; Not 0xffff, because the stack is 16-bit
+    sti             ; Re-enable interrupts
+
+    mov si, loading_part1
+    call print_string_simple
+
+    mov cl, [number_sectors]
+    call print_byte_simple
+
+    mov si, loading_part2
+    call print_string_simple
+
+read_sectors:
+    mov al, [leftover_tries]
+    test al, [leftover_tries]
+    jz sector_failure
+
+    ; DL = drive number (0=A:, 1=2nd floppy, 80h=drive 0, 81h=drive 1)
+    ; DL value already set by BIOS
+    xor ax, ax      ; Reset Disk System
+    int 0x13        ; Diskette BIOS Services
+
+    jc retry_read
+
+    mov ax, 0x1000
+    mov es, ax
+    mov bx, 0x0100  ; Buffer offset
+
+    ; DH = head number, DL = drive number
+    ; DL value already set by BIOS
+    xor dh, dh
+
+    ; CH = track/cylinder number
+    ; CL = sector number (starts at 1)
+    mov cx, 0x0002
+
+    ; Read Disk Sectors
+    ; 17 sectors (the 1.44MB floppy has 18 sectors per cilinder)
+    mov al, [number_sectors]
+    mov ah, 0x02
+    int 0x13        ; Diskette BIOS Services
+
+    jc retry_read
+
+    mov byte [sectors_loaded], al
+
+stop_motor:
+    mov dx, 0x03f2  ; Stop the motor from spinning
+    mov al, 0x0c    ; Not necessary for USB, only for floppy
+    out dx, al
+
+sector_success:
+    mov si, success_part1
+    call print_string_simple
+
+    mov cl, [sectors_loaded]
+    call print_byte_simple
+
+    mov si, success_part2
+    call print_string_simple
+
+    mc_delay 0x000f, 0x4240
+
+    jmp 0x1000:stage_2nd
+
+retry_read:
+    dec byte [leftover_tries]
+
+    jmp read_sectors
+
+sector_failure:
+    mov si, error_part1
+    call print_string_simple
+
+    mov cl, [number_sectors]
+    call print_byte_simple
+
+    mov si, error_part2
+    call print_string_simple
+
+    mov cl, [sectors_loaded]
+    call print_byte_simple
+
+    mov si, error_part3
+    call print_string_simple
+
+    mov si, reboot_text
+    call print_string_simple
+
+    call clear_key_simple
+    call wait_key_simple
+
+reboot:
+    mov ax, 0x0040
+    mov ds, ax
+
+    ; 0x0000 - cold boot
+    ; 0x1234 - warm boot
+    mov word [0x0072], 0x0000
+
+    jmp 0xffff:0x0000
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Custom functions - First stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+include 'sectorlib/simple.x86'
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Data section - First stage
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+loading_part1:  db 'Reading 0x', NUL
+loading_part2:  db ' sectors from the device...', CRLF, NUL
+
+success_part1:  db CRLF, 'Loaded 0x', NUL
+success_part2:  db ' sectors, now booting program...', NUL
+
+error_part1:    db CRLF, 'Error: tried to read 0x', NUL
+error_part2:    db ' sectors, but only 0x', NUL
+error_part3:    db ' sectors were loaded!', CRLF, NUL
+
+reboot_text:    db CRLF, 'Press any key to reboot', NUL
+
+leftover_tries: db 6
+number_sectors: db 17
+sectors_loaded: db 0
