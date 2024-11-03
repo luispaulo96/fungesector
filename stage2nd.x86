@@ -672,6 +672,9 @@ proc state_run
     mov word [.pc_direction], 0x0002
     mov byte [.hor_boundary], 1
 
+    mov sp, 0xfffe
+    mov word [0xfffe], 0
+
     xor bx, bx
 
 .fetch_loop:
@@ -681,11 +684,11 @@ proc state_run
 .do_increment:
     add bx, [.pc_direction]
 
-    ;cmp word [.pc_direction], 0x0002
-    ;je .check_wrap_right
+    cmp word [.pc_direction], 0x0002
+    je .check_wrap_right
 
-    ;cmp word [.pc_direction], -0x0002
-    ;je .check_wrap_left
+    cmp word [.pc_direction], -0x0002
+    je .check_wrap_left
 
     cmp word [.pc_direction], 0x00a0
     je .check_warp_down
@@ -1215,6 +1218,23 @@ proc state_run
     call clear_keyboard_buffer
     call wait_for_keypress
 
+    cmp al, CR_KEY
+    je .output_crlf
+
+.push_typed_char:
+    mov word [.char_to_write], ax
+    push word .char_to_write
+    call write_char_advance
+
+    xor ah, ah
+    push ax
+
+    jmp .fetch_loop
+
+.output_crlf:
+    push .newline
+    call write_string
+
     xor ah, ah
     push ax
 
@@ -1253,9 +1273,6 @@ proc state_run
     jmp .force_up
 
 .finish_command:
-    mov sp, 0xfffe
-    mov word [0xfffe], 0
-
     push .halt_message
     call write_string
 
