@@ -123,6 +123,8 @@ proc state_splash_screen
     push word [cursor_scanline]
     call enable_cursor
 
+    call init_random_seed
+
     jmp state_interpreter
 
     nop
@@ -152,14 +154,17 @@ endp
 
 proc state_interpreter
 .interpreter_init:
+    if LOGGER eq 1
     push interpreter_log
     call logger_string
+    end if
 
     call clear_display_page
 
     push 0x0000
     call set_cursor_position
 
+    ; Load preloaded code, if any
     push code_memory
     call write_string
 
@@ -797,10 +802,10 @@ proc state_run
 
     mov [.current_char], al
 
+    if LOGGER eq 1
     push ax
     call logger_char
-
-    ;mc_delay 0x0007, 0xa120
+    end if
 
     or byte [.advance_pc], 1
 
@@ -1062,7 +1067,9 @@ proc state_run
     jmp .fetch_loop
 
 .force_random:
-    call random_direction
+    call set_random_next
+
+    call set_random_direction
 
     cmp ax, 0
     je .force_up
@@ -1329,13 +1336,17 @@ exit_reboot:
 include 'sectorlib/bios_keyboard.x86'
 include 'sectorlib/bios_video.x86'
 include 'sectorlib/functions.x86'
+
+if LOGGER eq 1
 include 'sectorlib/logging.x86'
+end if
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Data section - Second stage
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 var current_page    db 0
+var current_seed    dw 0x0000
 var cursor_scanline dw 0x0000
 
 var interpreter_log db 'Interpreter page', CRLF, NUL

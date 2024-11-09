@@ -101,16 +101,42 @@ proc int_to_ascii
     ret 0x04
 endp
 
-proc random_direction
+proc init_random_seed
     xor ax, ax
     int 0x1a
 
-    mov ax, dx
-    xor dx, dx
-    mov cx, 0x0004
+    mov [current_seed], dx
+
+.finish:
+    ret
+endp
+
+proc set_random_next
+    ; Lehmer random number generator
+    ; Xn+1 = a * Xn % m
+
+    ; a = multiplier
+    mov ax, 2469
+
+    ; Xn = previous seed
+    mul word [current_seed]
+
+    ; m = 2 ** 16 - 15
+    mov cx, 65521
     div cx
 
-    mov ax, dx
+    ; Xn+1 = next seed
+    mov [current_seed], dx
 
+.finish:
+    ret
+endp
+
+proc set_random_direction
+    mov ax, [current_seed]
+
+    and ax, 0x0003
+
+.finish:
     ret
 endp
